@@ -1,12 +1,18 @@
 package guru.springframework.client;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import guru.springframework.exception.ClientException;
+import guru.springframework.exception.ResourceNotFoundException;
 import guru.springframework.model.BeerDTO;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.rmi.ServerException;
+import java.time.Duration;
 import java.util.Map;
 
 @Service
@@ -94,6 +100,42 @@ public class BeerClientImpl implements BeerClient {
                 )
                 .retrieve()
                 .bodyToMono(BeerDTO.class);
+    }
+
+    @Override
+    public Mono<BeerDTO> findBeerById(String id) {
+        return webClient.get()
+                .uri(uriBuilder -> uriBuilder.path(BEER_PATH_ID)
+                        .build(id)
+                )
+                .exchangeToMono(response -> {
+                    // Log the response status
+                    System.out.println("Response status: " + response.statusCode());
+
+                    // Access and log headers
+                    HttpHeaders headers = response.headers().asHttpHeaders();
+                    System.out.println("Content-Type: " + headers.getContentType());
+
+
+                    if (response.statusCode().is2xxSuccessful()) {
+                        return response.bodyToMono(BeerDTO.class)
+                                .doOnNext(beer -> System.out.println("Successfully retrieved beer: " + beer.getBeerName()));
+                    } else if (response.statusCode().equals(HttpStatus.NOT_FOUND)) {
+                        return Mono.error(new ResourceNotFoundException("Beer not found with ID: " + id));
+                    } else if (response.statusCode().is4xxClientError()) {
+                        return Mono.error(new ClientException("Client error: " + response.statusCode()));
+                    } else if (response.statusCode().is5xxServerError()) {
+                        // Implement retry logic for server errors
+                        return Mono.error(new ServerException("Server error: " + response.statusCode()));
+                    } else {
+                        return response.createException()
+                                .flatMap(Mono::error);
+                    }
+                })
+                .retry(3)
+                .timeout(Duration.ofSeconds(5))
+                .doOnError(error -> System.err.println("Error retrieving beer: " + error.getMessage()));
+
     }
 
     @Override
